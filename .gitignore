@@ -62,3 +62,5 @@ next-env.d.ts
 /scripts/final-adjustments.py
 
 /scripts/finish-ui.py
+
+.dev.vars*

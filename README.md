@@ -1,4 +1,33 @@
-# vinext-starter
+# ASN — Acompanhamento de projetos
+
+Sistema de acompanhamento semanal e avaliação trimestral. O repositório é privado e contém dados iniciais reais de estudantes.
+
+## Acesso próprio
+
+- Login por e-mail e senha, sem uso de identidade ou cabeçalhos do ChatGPT.
+- Administração em **Usuários e permissões**: criar, aprovar, bloquear, editar e excluir contas; abrir ou fechar solicitações de cadastro.
+- Administradores têm acesso completo. Coordenadores abrangem todas as turmas, mas respeitam as permissões concedidas. Avaliadores e representantes respeitam os vínculos de área e grupo.
+- Cada página do menu pode ser liberada separadamente. Criar, editar/inativar e excluir possuem permissões independentes para cada tipo de cadastro. Só visualizar Cadastros não autoriza alterações.
+- Bloqueios e alterações de acesso revogam as sessões existentes. O histórico escolar é preservado ao excluir uma conta.
+- Senhas usam PBKDF2-SHA256 com salt aleatório e 100.000 iterações (compatível com Web Crypto do Workers). Sessões de 8 horas usam token aleatório, armazenado como hash, e cookie HttpOnly/SameSite=Strict/Secure em HTTPS. Há limites de tentativas de entrada e validação de origem nas alterações.
+
+## Inicialização em uma nova hospedagem
+
+Aplicar as migrações de `drizzle/` em ordem. Configurar **ADMIN_PASSWORD_HASH** como segredo de execução do Worker antes da primeira entrada do administrador `welber05@gmail.com`. O script `scripts/create-admin-hash.mjs` recebe `ADMIN_INITIAL_PASSWORD` pelo ambiente e grava o hash em `.sites-runtime/admin-password-hash.txt` (ignorado pelo Git). Não colocar senha nem hash em código, commits ou variáveis públicas. Depois da primeira entrada, o administrador fica no banco; o segredo inicial pode ser removido. Ele nunca redefine a senha de uma conta existente.
+
+A base local e os segredos não são enviados ao GitHub. Publicar o código não transfere automaticamente as contas, sessões, documentos enviados ou registros novos da base local.
+
+Em Sites, uma hospedagem privada continua exigindo a entrada do ChatGPT antes de carregar o aplicativo. Para disponibilizar este login próprio sem essa exigência, a entrada da hospedagem precisa permitir visitantes anônimos; os dados continuam protegidos pelas sessões e permissões do aplicativo. Não considerar a publicação configurada apenas pelo envio ao GitHub.
+
+## Verificação e sincronização
+
+Seguir `AGENTS.md`: consultar o remoto antes de editar, integrar novidades sem descartar trabalho, validar, enviar e comparar os commits. Sem serviço permanente de sincronização em segundo plano.
+
+`node scripts/test-auth-permissions.mjs` valida autenticação, aprovação, proteção de páginas e CRUD independente contra uma base **local** já inicializada; recebe `TEST_ADMIN_PASSWORD` e opcionalmente `TEST_URL` pelo ambiente. Os registros de teste são removidos ao finalizar. O teste de fluxo escolar `scripts/test-workflows.mjs` também exige essa sessão e deve ser executado em base de testes: cria histórico de avaliação que precisa ser preservado ou descartado somente nesse ambiente.
+
+## Referência técnica do ambiente
+
+### Vinext
 
 A clean full-stack starter running on [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and Drizzle support.
 

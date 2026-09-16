@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {defaultConfig,studentGrade,groupStage,percentScore,validateConfig} from '../lib/model.ts';
-const url='http://localhost:5173';const created=[];
-async function post(b,expected=200){const r=await fetch(url+'/api/data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});const data=await r.json();assert.equal(r.status,expected,JSON.stringify({b,data}));if(data.id&&['class','group','student','weeks','report','evaluator','assignment'].includes(b.action))created.push(data.id);return data;}
-async function all(){const r=await fetch(url+'/api/data');assert.equal(r.status,200);return r.json();}
+const url=process.env.TEST_URL??'http://127.0.0.1:8787';const created=[];
+if(!process.env.TEST_ADMIN_PASSWORD)throw Error('Defina TEST_ADMIN_PASSWORD para testar em uma base local.');
+const login=await fetch(url+'/api/auth',{method:'POST',headers:{'Content-Type':'application/json',Origin:url},body:JSON.stringify({action:'login',email:'welber05@gmail.com',password:process.env.TEST_ADMIN_PASSWORD})});assert.equal(login.status,200);const cookie=login.headers.get('set-cookie').split(';')[0];await login.text();
+
+async function post(b,expected=200){const r=await fetch(url+'/api/data',{method:'POST',headers:{'Content-Type':'application/json',Origin:url,Cookie:cookie},body:JSON.stringify(b)});const data=await r.json();assert.equal(r.status,expected,JSON.stringify({b,data}));if(data.id&&['class','group','student','weeks','report','evaluator','assignment'].includes(b.action))created.push(data.id);return data;}
+async function all(){const r=await fetch(url+'/api/data?page=grades',{headers:{Cookie:cookie}});assert.equal(r.status,200);return r.json();}
 const initial=await all();assert.equal(initial.students.length,33);assert.equal(initial.tasks.filter(t=>t.status==='pending').length,29);assert.equal(initial.students.find(s=>s.name==='CAROLINY SOARES DE SOUZA').group_id,'group-2');
 const cls=(await post({action:'class',name:'QA temporária',grade:1,year:2026})).id;
 await fs.writeFile('.sites-runtime/test-class.json',JSON.stringify({id:cls}));
@@ -37,8 +40,8 @@ const otherAss=(await post({action:'assignment',groupId:gr,stage:'app',evaluator
 await post({action:'assessment',assignmentId:otherAss,scores:{function:100,data:100,usability:100}},400);
 await post({action:'remove',table:'assignments',id:otherAss});
 await post({action:'remove',table:'evaluators',id:other});
-const pdf=new Blob(['%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\n%%EOF'],{type:'application/pdf'});const fd=new FormData();fd.set('groupId',gr);fd.set('file',pdf,'teste.pdf');let upload=await fetch(url+'/api/files',{method:'POST',body:fd});assert.equal(upload.status,200,await upload.text());
-data=await all();const file=data.files.find(f=>f.group_id===gr);const downloaded=await fetch(url+'/api/files?id='+file.id);assert.equal(await downloaded.text(),await pdf.text());
+const pdf=new Blob(['%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\n%%EOF'],{type:'application/pdf'});const fd=new FormData();fd.set('groupId',gr);fd.set('file',pdf,'teste.pdf');let upload=await fetch(url+'/api/files',{method:'POST',body:fd,headers:{Origin:url,Cookie:cookie}});assert.equal(upload.status,200,await upload.text());
+data=await all();const file=data.files.find(f=>f.group_id===gr);const downloaded=await fetch(url+'/api/files?id='+file.id,{headers:{Cookie:cookie}});assert.equal(await downloaded.text(),await pdf.text());
 for(const stage of ['written','presentation','app']){const ass=(await post({action:'assignment',groupId:gr,stage,evaluatorId:ev})).id;const scores=Object.fromEntries(cfg[stage].criteria.map(c=>[c.id,80]));await post({action:'assessment',assignmentId:ass,fileId:file.id,scores,notes:'Ficha de teste'});}
 data=await all();const result=studentGrade(data,data.students.find(s=>s.id===student));assert.equal(result.complete,true);assert.equal(result.total,31.95);assert.equal(result.max,40);
 // A second reviewer contributes equally and incomplete panels stay provisional.

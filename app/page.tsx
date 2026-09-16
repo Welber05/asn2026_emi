@@ -1,1 +1,3 @@
-import Workspace from './workspace'; export default function Home(){return <Workspace/>;}
+import Workspace from './workspace';
+import {AuthGate} from './account-ui';
+export default function Home(){return <AuthGate><Workspace/></AuthGate>;}

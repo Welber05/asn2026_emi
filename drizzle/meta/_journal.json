@@ -15,6 +15,13 @@
       "when": 1789560563670,
       "tag": "0001_worthless_greymalkin",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789565700487,
+      "tag": "0002_known_gressill",
+      "breakpoints": true
     }
   ]
 }

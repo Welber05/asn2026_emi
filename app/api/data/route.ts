@@ -1,5 +1,7 @@
 import {database} from '../../../db/raw';
 
+import {allowed} from '../../../lib/permissions';
+import {sameOrigin} from '../../../lib/session';
 import {access,requireArea} from '../../../lib/access';
 
 import {validateConfig,validatePeer,percentScore,stages} from '../../../lib/model';
@@ -14,25 +16,26 @@ const txt=(v:unknown,max=10000)=>{if(typeof v!=='string'||!v.trim()||v.length>ma
 
 const date=(v:unknown)=>{const s=txt(v,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(s)||Number.isNaN(Date.parse(s))||new Date(s).toISOString().slice(0,10)!==s)throw Error('Data inválida.');return s;};
 
-export async function GET(){try{const auth=await access();if(!auth.initialized)return Response.json({needsInitialization:true});if(!auth.admin&&!auth.evaluators.length&&!auth.representatives.length)return Response.json({error:'Seu e-mail ainda não foi cadastrado para acessar o sistema. Solicite acesso ao coordenador.'},{status:403});const db=database();const data:any={};for(const t of tables)data[t]=(await db.prepare(`SELECT * FROM ${t}${t==='audit'?' ORDER BY at DESC LIMIT 500':''}`).all()).results;
+export async function GET(req:Request){try{const auth=await access();if(!auth.initialized)return Response.json({needsInitialization:true});const db=database();const page=new URL(req.url).searchParams.get('page')??'dashboard';const pages=['dashboard','weeks','tasks','participation','written','assessments','grades','registry','rubrics'];const allowedPages=pages.filter(p=>allowed(auth.user,p));if(auth.user.role==='admin')allowedPages.push('users');allowedPages.push('account');if(!allowedPages.includes(page))return Response.json({error:'Página não autorizada.',allowedPages},{status:403});const data:any={};for(const t of tables)data[t]=(await db.prepare(`SELECT * FROM ${t}${t==='audit'?' ORDER BY at DESC LIMIT 500':''}`).all()).results;
 
  if(!auth.admin){const mine=data.evaluators.filter((e:any)=>e.email===auth.user.email.toLowerCase()&&e.active===1);const own=data.assignments.filter((a:any)=>a.active===1&&mine.some((e:any)=>e.id===a.evaluator_id));const memberGroups=new Set(auth.representatives.map((r:any)=>r.group_id));const gids=new Set([...own.map((a:any)=>a.group_id),...memberGroups]);const cids=new Set(data.groups.filter((g:any)=>gids.has(g.id)).map((g:any)=>g.class_id));data.classes=data.classes.filter((c:any)=>cids.has(c.id));data.groups=data.groups.filter((g:any)=>gids.has(g.id));data.students=data.students.filter((s:any)=>gids.has(s.group_id));data.weeks=data.weeks.filter((w:any)=>cids.has(w.class_id));data.reports=data.reports.filter((r:any)=>memberGroups.has(r.group_id)||own.some((a:any)=>a.group_id===r.group_id&&a.stage==='weekly'));data.tasks=data.tasks.filter((t:any)=>data.reports.some((r:any)=>r.id===t.report_id));data.rubrics=data.rubrics.filter((r:any)=>cids.has(r.class_id));data.files=data.files.filter((f:any)=>memberGroups.has(f.group_id)||own.some((a:any)=>a.group_id===f.group_id&&['written','presentation'].includes(a.stage)));data.assignments=own;data.evaluators=mine;data.assessments=data.assessments.filter((a:any)=>own.some((x:any)=>x.id===a.assignment_id));data.representatives=data.representatives.filter((r:any)=>r.email===auth.user.email.toLowerCase());data.participation=data.participation.filter((p:any)=>data.reports.some((r:any)=>r.id===p.report_id));data.audit=[];}
 
- data.user={admin:auth.admin,email:auth.user.email,name:auth.user.displayName,representativeGroups:auth.representatives.map((r:any)=>r.group_id)};return Response.json(data,{headers:{'Cache-Control':'no-store'}});
+
+ const pageTables:Record<string,string[]>={dashboard:['reports','tasks','participation','rubrics','assignments','evaluators'],weeks:['reports','tasks','participation','rubrics','assignments','evaluators'],tasks:['reports','tasks','rubrics','assignments','evaluators'],participation:['reports','tasks','participation','rubrics'],written:['files'],assessments:['assignments','evaluators','files','rubrics','assessments'],grades:['reports','tasks','participation','rubrics','assignments','evaluators','assessments','files'],registry:['evaluators','representatives','assignments'],rubrics:['rubrics','reports','tasks','participation','assignments','assessments'],account:[],users:[]};
+ const keep=new Set([...(['account','users'].includes(page)?[]:['classes','groups','students','weeks']),...(pageTables[page]??[])]);for(const t of tables)if(!keep.has(t))data[t]=[];
+ data.page=page;data.user={admin:auth.admin,role:auth.user.role,permissions:auth.user.permissions,allowedPages,email:auth.user.email,name:auth.user.displayName,representativeGroups:auth.representatives.map((r:any)=>r.group_id)};return Response.json(data,{headers:{'Cache-Control':'no-store'}});
 
  }catch(e){console.error(e);return Response.json({error:String(e).includes('AUTH_REQUIRED')?'Entre com sua conta para continuar.':'Não foi possível carregar a base de dados.',authRequired:String(e).includes('AUTH_REQUIRED')},{status:String(e).includes('AUTH_REQUIRED')?401:503});}}
 
 export async function POST(req:Request){try{
 
- if(req.headers.get('origin')&&req.headers.get('origin')!==new URL(req.url).origin)return Response.json({error:'Origem não autorizada.'},{status:403});
-
- const b:any=await req.json();const auth=await access();const db=database();const now=new Date().toISOString();let entity='',entityId=id();let qs:D1PreparedStatement[]=[];
+ const b:any=await req.json();sameOrigin(req);const auth=await access();const db=database();const now=new Date().toISOString();let entity='',entityId=id();let qs:D1PreparedStatement[]=[];
 
  const get=async(t:string,key:string)=>{const r=await db.prepare(`SELECT * FROM ${t} WHERE id=?`).bind(key).first<any>();if(!r)throw Error('Registro não encontrado. Atualize a página.');return r;};
 
  if(b.action==='initialize'){
 
-  if(auth.initialized)return Response.json({ok:true});if(!auth.admin)return Response.json({error:'Somente o coordenador pode inicializar.'},{status:403});
+  if(auth.initialized)return Response.json({ok:true});if(auth.user.role!=='admin')return Response.json({error:'Somente o administrador pode inicializar.'},{status:403});
 
   // First initialization happens while the Site is owner-private.
 
@@ -56,7 +59,22 @@ export async function POST(req:Request){try{
 
  if(!auth.initialized)throw Error('Inicialize a base primeiro.');
 
- if(!auth.admin&&!['review-task','review-report','check-plan','assessment','report','update-report','participation'].includes(b.action))return Response.json({error:'Somente o coordenador pode realizar esta ação.'},{status:403});
+
+ const registryActions:Record<string,string>={class:'classes',group:'groups',student:'students',weeks:'weeks',evaluator:'evaluators',assignment:'assignments',representative:'representatives'};
+ const registryTable=registryActions[b.action]??(['edit','remove'].includes(b.action)?String(b.table):null);
+ const operation=b.action==='remove'?'delete':b.action==='edit'||(b.action==='student'&&b.id)?'update':'create';
+ const actionPermissions:Record<string,string[]>={report:['weeks','report_write'],'update-report':['weeks','report_write'],'review-task':['tasks','review'],'review-report':['weeks','review'],'check-plan':['weeks','review'],participation:['participation','participation_write'],assessment:['assessments','assessment_write'],rubric:['rubrics','rubrics_write']};
+ const required=registryTable?[(registryTable==='weeks'&&allowed(auth.user,'weeks'))?'weeks':'registry',registryTable+'.'+operation]:actionPermissions[b.action];
+ if(!required||required.some(p=>!allowed(auth.user,p)))return Response.json({error:'Você não tem permissão para executar esta ação.'},{status:403});
+ if(registryTable&&!auth.admin){
+  const gids=new Set(auth.representatives.map((r:any)=>r.group_id));for(const ev of auth.evaluators){const rows=(await db.prepare('SELECT group_id FROM assignments WHERE evaluator_id=? AND active=1').bind(ev.id).all<any>()).results;for(const row of rows)gids.add(row.group_id);}
+  const scopeGroups=(await db.prepare('SELECT id,class_id FROM groups').all<any>()).results.filter((g:any)=>gids.has(g.id));const cids=new Set(scopeGroups.map((g:any)=>g.class_id));
+  const old=['edit','remove'].includes(b.action)||b.id?await get(registryTable,b.id):null;
+  const cid=old?.class_id??b.classId;const gid=old?.group_id??b.groupId;
+  if(registryTable==='classes'||(registryTable==='groups'&&old&&!gids.has(old.id))||(cid&&!cids.has(cid))||(gid&&!gids.has(gid))||(!cid&&!gid))return Response.json({error:'Cadastro fora das turmas e grupos vinculados ao seu perfil.'},{status:403});
+  if(b.changes?.group_id&&!gids.has(b.changes.group_id))return Response.json({error:'Grupo fora do seu acesso.'},{status:403});
+ }
+
 
  if(b.action==='remove'||b.action==='edit'){
 
