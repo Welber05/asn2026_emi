@@ -19,6 +19,10 @@ await post({action:'review-task',id:task.id,updatedAt:task.updated_at,status:'do
 const cfg=defaultConfig();for(const s of Object.values(cfg))s.points=10;
 await post({action:'rubric',classId:cls,total:41,config:cfg},400);
 await post({action:'rubric',classId:cls,total:40,config:cfg});
+const representative=(await post({action:'representative',groupId:gr,name:'Representante QA',email:'representante@example.invalid'})).id;
+await post({action:'edit',table:'representatives',id:representative,changes:{name:'Representante QA revisado'}});
+await post({action:'participation',reportId:rp,scores:{[student]:{participation:120,fulfillment:100}}},400);
+await post({action:'participation',reportId:rp,scores:{[student]:{participation:80,fulfillment:100}}});
 await post({action:'review-task',id:task.id,updatedAt:task.updated_at,status:'missed',percent:75,justification:''},400);
 await post({action:'review-task',id:task.id,updatedAt:task.updated_at,status:'done',percent:101},400);
 await post({action:'review-task',id:task.id,updatedAt:task.updated_at,status:'done',percent:75});
@@ -36,7 +40,7 @@ await post({action:'remove',table:'evaluators',id:other});
 const pdf=new Blob(['%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\n%%EOF'],{type:'application/pdf'});const fd=new FormData();fd.set('groupId',gr);fd.set('file',pdf,'teste.pdf');let upload=await fetch(url+'/api/files',{method:'POST',body:fd});assert.equal(upload.status,200,await upload.text());
 data=await all();const file=data.files.find(f=>f.group_id===gr);const downloaded=await fetch(url+'/api/files?id='+file.id);assert.equal(await downloaded.text(),await pdf.text());
 for(const stage of ['written','presentation','app']){const ass=(await post({action:'assignment',groupId:gr,stage,evaluatorId:ev})).id;const scores=Object.fromEntries(cfg[stage].criteria.map(c=>[c.id,80]));await post({action:'assessment',assignmentId:ass,fileId:file.id,scores,notes:'Ficha de teste'});}
-data=await all();const result=studentGrade(data,data.students.find(s=>s.id===student));assert.equal(result.complete,true);assert.equal(result.total,31.65);assert.equal(result.max,40);
+data=await all();const result=studentGrade(data,data.students.find(s=>s.id===student));assert.equal(result.complete,true);assert.equal(result.total,31.95);assert.equal(result.max,40);
 // A second reviewer contributes equally and incomplete panels stay provisional.
 const assApp=data.assignments.find(a=>a.group_id===gr&&a.stage==='app');data.assignments.push({...assApp,id:'second'});assert.equal(groupStage(data,gr,'app').complete,false);data.assessments.push({id:'second-score',assignment_id:'second',percent:100,submitted_at:new Date().toISOString()});assert.equal(groupStage(data,gr,'app').percent,90);
 assert.throws(()=>validateConfig(41,cfg));assert.throws(()=>percentScore(cfg.app.criteria,{function:101,data:20,usability:30}));
@@ -45,8 +49,8 @@ data.files.push({...file,id:'new-version',uploaded_at:'2099-01-01T00:00:00Z'});a
 await post({action:'remove',table:'students',id:student},400);
 await post({action:'edit',table:'students',id:student,changes:{active:0}});
 assert.equal((await all()).students.find(s=>s.id===student).active,0);
-console.log('PASS: importação; CRUD; relatórios sem duplicação; justificativa obrigatória; limites 0–100; pesos; bloqueio de parâmetros; identidade do avaliador; upload/download; cálculo 31,65/40; banca; versionamento; inativação.');
+console.log('PASS: importação; CRUD; relatórios sem duplicação; justificativa obrigatória; limites 0–100; pesos; bloqueio de parâmetros; identidade do avaliador; upload/download; cálculo 31,95/40 com participação semanal; banca; versionamento; inativação.');
 // Cleanup is confined to the generated QA class in the local preview database.
 assert.match(cls,/^[a-f0-9-]+$/);
 const q=`'${cls}'`;
-const cleanup=[`DELETE FROM assessments WHERE assignment_id IN (SELECT a.id FROM assignments a JOIN groups g ON a.group_id=g.id WHERE g.class_id=${q})`,`DELETE FROM assignments WHERE group_id IN (SELECT id FROM groups WHERE class_id=${q})`,`DELETE FROM files WHERE group_id IN (SELECT id FROM groups WHERE class_id=${q})`,`DELETE FROM tasks WHERE report_id IN (SELECT r.id FROM reports r JOIN groups g ON r.group_id=g.id WHERE g.class_id=${q})`,`DELETE FROM reports WHERE group_id IN (SELECT id FROM groups WHERE class_id=${q})`,`DELETE FROM students WHERE class_id=${q}`,`DELETE FROM weeks WHERE class_id=${q}`,`DELETE FROM evaluators WHERE class_id=${q}`,`DELETE FROM rubrics WHERE class_id=${q}`,`DELETE FROM groups WHERE class_id=${q}`,`DELETE FROM classes WHERE id=${q}`,`DELETE FROM audit WHERE details LIKE '%${cls}%' OR details LIKE '%${gr}%' OR details LIKE '%${student}%' OR details LIKE '%${rp}%'`];await fs.writeFile('.sites-runtime/cleanup-qa.sql',cleanup.join(';\n')+';');
+const cleanup=[`DELETE FROM assessments WHERE assignment_id IN (SELECT a.id FROM assignments a JOIN groups g ON a.group_id=g.id WHERE g.class_id=${q})`,`DELETE FROM assignments WHERE group_id IN (SELECT id FROM groups WHERE class_id=${q})`,`DELETE FROM files WHERE group_id IN (SELECT id FROM groups WHERE class_id=${q})`,`DELETE FROM tasks WHERE report_id IN (SELECT r.id FROM reports r JOIN groups g ON r.group_id=g.id WHERE g.class_id=${q})`,`DELETE FROM reports WHERE group_id IN (SELECT id FROM groups WHERE class_id=${q})`,`DELETE FROM students WHERE class_id=${q}`,`DELETE FROM weeks WHERE class_id=${q}`,`DELETE FROM evaluators WHERE class_id=${q}`,`DELETE FROM rubrics WHERE class_id=${q}`,`DELETE FROM groups WHERE class_id=${q}`,`DELETE FROM classes WHERE id=${q}`,`DELETE FROM audit WHERE details LIKE '%${cls}%' OR details LIKE '%${gr}%' OR details LIKE '%${student}%' OR details LIKE '%${rp}%'`];cleanup.unshift(`DELETE FROM participation WHERE report_id IN (SELECT r.id FROM reports r JOIN groups g ON r.group_id=g.id WHERE g.class_id=${q})`,`DELETE FROM representatives WHERE group_id IN (SELECT id FROM groups WHERE class_id=${q})`);await fs.writeFile('.sites-runtime/cleanup-qa.sql',cleanup.join(';\n')+';');

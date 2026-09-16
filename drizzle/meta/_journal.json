@@ -8,6 +8,13 @@
       "when": 1789559335933,
       "tag": "0000_steep_toro",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789560563670,
+      "tag": "0001_worthless_greymalkin",
+      "breakpoints": true
     }
   ]
 }

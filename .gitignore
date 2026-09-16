@@ -54,3 +54,11 @@ next-env.d.ts
 /scripts/refine.py
 
 /scripts/harden.py
+
+/scripts/add-participation.py
+
+/scripts/participation-ui.py
+
+/scripts/final-adjustments.py
+
+/scripts/finish-ui.py

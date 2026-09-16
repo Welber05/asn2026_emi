@@ -2,11 +2,11 @@ import {database} from '../../../db/raw';
 
 import {access,requireArea} from '../../../lib/access';
 
-import {validateConfig,percentScore,stages} from '../../../lib/model';
+import {validateConfig,validatePeer,percentScore,stages} from '../../../lib/model';
 
 import seed from '../../../db/seed.json';
 
-const tables=['classes','groups','students','weeks','reports','tasks','audit','rubrics','evaluators','assignments','files','assessments'] as const;
+const tables=['classes','groups','students','weeks','reports','tasks','audit','rubrics','evaluators','assignments','files','assessments','representatives','participation'] as const;
 
 const id=()=>crypto.randomUUID();
 
@@ -14,11 +14,11 @@ const txt=(v:unknown,max=10000)=>{if(typeof v!=='string'||!v.trim()||v.length>ma
 
 const date=(v:unknown)=>{const s=txt(v,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(s)||Number.isNaN(Date.parse(s))||new Date(s).toISOString().slice(0,10)!==s)throw Error('Data inválida.');return s;};
 
-export async function GET(){try{const auth=await access();if(!auth.initialized)return Response.json({needsInitialization:true});if(!auth.admin&&!auth.evaluators.length)return Response.json({error:'Seu e-mail ainda não foi cadastrado como avaliador. Solicite acesso ao coordenador.'},{status:403});const db=database();const data:any={};for(const t of tables)data[t]=(await db.prepare(`SELECT * FROM ${t}${t==='audit'?' ORDER BY at DESC LIMIT 500':''}`).all()).results;
+export async function GET(){try{const auth=await access();if(!auth.initialized)return Response.json({needsInitialization:true});if(!auth.admin&&!auth.evaluators.length&&!auth.representatives.length)return Response.json({error:'Seu e-mail ainda não foi cadastrado para acessar o sistema. Solicite acesso ao coordenador.'},{status:403});const db=database();const data:any={};for(const t of tables)data[t]=(await db.prepare(`SELECT * FROM ${t}${t==='audit'?' ORDER BY at DESC LIMIT 500':''}`).all()).results;
 
- if(!auth.admin){const mine=data.evaluators.filter((e:any)=>e.email===auth.user.email.toLowerCase()&&e.active===1);const own=data.assignments.filter((a:any)=>a.active===1&&mine.some((e:any)=>e.id===a.evaluator_id));const gids=new Set(own.map((a:any)=>a.group_id));const cids=new Set(data.groups.filter((g:any)=>gids.has(g.id)).map((g:any)=>g.class_id));data.classes=data.classes.filter((c:any)=>cids.has(c.id));data.groups=data.groups.filter((g:any)=>gids.has(g.id));data.students=data.students.filter((s:any)=>gids.has(s.group_id));data.weeks=data.weeks.filter((w:any)=>cids.has(w.class_id));data.reports=data.reports.filter((r:any)=>own.some((a:any)=>a.group_id===r.group_id&&a.stage==='weekly'));data.tasks=data.tasks.filter((t:any)=>data.reports.some((r:any)=>r.id===t.report_id));data.rubrics=data.rubrics.filter((r:any)=>cids.has(r.class_id));data.files=data.files.filter((f:any)=>own.some((a:any)=>a.group_id===f.group_id&&['written','presentation'].includes(a.stage)));data.assignments=own;data.evaluators=mine;data.assessments=data.assessments.filter((a:any)=>own.some((x:any)=>x.id===a.assignment_id));data.audit=[];}
+ if(!auth.admin){const mine=data.evaluators.filter((e:any)=>e.email===auth.user.email.toLowerCase()&&e.active===1);const own=data.assignments.filter((a:any)=>a.active===1&&mine.some((e:any)=>e.id===a.evaluator_id));const memberGroups=new Set(auth.representatives.map((r:any)=>r.group_id));const gids=new Set([...own.map((a:any)=>a.group_id),...memberGroups]);const cids=new Set(data.groups.filter((g:any)=>gids.has(g.id)).map((g:any)=>g.class_id));data.classes=data.classes.filter((c:any)=>cids.has(c.id));data.groups=data.groups.filter((g:any)=>gids.has(g.id));data.students=data.students.filter((s:any)=>gids.has(s.group_id));data.weeks=data.weeks.filter((w:any)=>cids.has(w.class_id));data.reports=data.reports.filter((r:any)=>memberGroups.has(r.group_id)||own.some((a:any)=>a.group_id===r.group_id&&a.stage==='weekly'));data.tasks=data.tasks.filter((t:any)=>data.reports.some((r:any)=>r.id===t.report_id));data.rubrics=data.rubrics.filter((r:any)=>cids.has(r.class_id));data.files=data.files.filter((f:any)=>memberGroups.has(f.group_id)||own.some((a:any)=>a.group_id===f.group_id&&['written','presentation'].includes(a.stage)));data.assignments=own;data.evaluators=mine;data.assessments=data.assessments.filter((a:any)=>own.some((x:any)=>x.id===a.assignment_id));data.representatives=data.representatives.filter((r:any)=>r.email===auth.user.email.toLowerCase());data.participation=data.participation.filter((p:any)=>data.reports.some((r:any)=>r.id===p.report_id));data.audit=[];}
 
- data.user={admin:auth.admin,email:auth.user.email,name:auth.user.displayName};return Response.json(data,{headers:{'Cache-Control':'no-store'}});
+ data.user={admin:auth.admin,email:auth.user.email,name:auth.user.displayName,representativeGroups:auth.representatives.map((r:any)=>r.group_id)};return Response.json(data,{headers:{'Cache-Control':'no-store'}});
 
  }catch(e){console.error(e);return Response.json({error:String(e).includes('AUTH_REQUIRED')?'Entre com sua conta para continuar.':'Não foi possível carregar a base de dados.',authRequired:String(e).includes('AUTH_REQUIRED')},{status:String(e).includes('AUTH_REQUIRED')?401:503});}}
 
@@ -56,17 +56,17 @@ export async function POST(req:Request){try{
 
  if(!auth.initialized)throw Error('Inicialize a base primeiro.');
 
- if(!auth.admin&&!['review-task','review-report','check-plan','assessment'].includes(b.action))return Response.json({error:'Somente o coordenador pode realizar esta ação.'},{status:403});
+ if(!auth.admin&&!['review-task','review-report','check-plan','assessment','report','update-report','participation'].includes(b.action))return Response.json({error:'Somente o coordenador pode realizar esta ação.'},{status:403});
 
  if(b.action==='remove'||b.action==='edit'){
 
-  const allowed:Record<string,string[]>={classes:['name','grade','year','active'],groups:['name','start_week','active'],students:['name','group_id','active'],weeks:['start','due_at'],evaluators:['name','email','active'],assignments:['evaluator_id','stage','active']};
+  const allowed:Record<string,string[]>={classes:['name','grade','year','active'],groups:['name','start_week','active'],students:['name','group_id','active'],weeks:['start','due_at'],evaluators:['name','email','active'],assignments:['evaluator_id','stage','active'],representatives:['name','email','active']};
 
   entity=String(b.table);if(!allowed[entity])throw Error('Cadastro inválido.');entityId=txt(b.id,100);const old=await get(entity,entityId);
 
   if(b.action==='remove'){
 
-   const refs:Record<string,string[]>={classes:['groups:class_id','students:class_id','weeks:class_id','evaluators:class_id','rubrics:class_id'],groups:['students:group_id','reports:group_id','files:group_id','assignments:group_id'],students:['tasks:student_id'],weeks:['reports:week_id'],evaluators:['assignments:evaluator_id'],assignments:['assessments:assignment_id']};
+   const refs:Record<string,string[]>={classes:['groups:class_id','students:class_id','weeks:class_id','evaluators:class_id','rubrics:class_id'],groups:['students:group_id','reports:group_id','files:group_id','assignments:group_id','representatives:group_id'],students:['tasks:student_id'],weeks:['reports:week_id'],evaluators:['assignments:evaluator_id'],assignments:['assessments:assignment_id'],representatives:[]};
 
    for(const ref of refs[entity]){const [table,col]=ref.split(':');if(await db.prepare(`SELECT id FROM ${table} WHERE ${col}=? LIMIT 1`).bind(entityId).first())throw Error('Este cadastro tem histórico vinculado. Use Inativar para preservá-lo.');}
 
@@ -88,7 +88,7 @@ export async function POST(req:Request){try{
 
    if('due_at' in changes){if(!Number.isFinite(Date.parse(changes.due_at)))throw Error('Prazo inválido.');changes.due_at=new Date(changes.due_at).toISOString();}
 
-   if(entity==='assignments'){const ev=await get('evaluators',changes.evaluator_id??old.evaluator_id),gr=await get('groups',old.group_id);if(ev.class_id!==gr.class_id||!stages.some(x=>x.id===(changes.stage??old.stage)))throw Error('Vínculo inválido.');if(await db.prepare('SELECT id FROM assessments WHERE assignment_id=? LIMIT 1').bind(entityId).first()&&keys.some(k=>k!=='active'))throw Error('Este vínculo tem fichas. Inative e crie um novo vínculo.');}
+   if(entity==='assignments'){if((changes.stage??old.stage)==='weekly'&&(changes.active??old.active)===1&&await db.prepare("SELECT id FROM assignments WHERE group_id=? AND stage='weekly' AND active=1 AND id<>?").bind(old.group_id,old.id).first())throw Error('Já há um responsável semanal neste grupo.');const ev=await get('evaluators',changes.evaluator_id??old.evaluator_id),gr=await get('groups',old.group_id);if(ev.class_id!==gr.class_id||!stages.some(x=>x.id===(changes.stage??old.stage)))throw Error('Vínculo inválido.');if(await db.prepare('SELECT id FROM assessments WHERE assignment_id=? LIMIT 1').bind(entityId).first()&&keys.some(k=>k!=='active'))throw Error('Este vínculo tem fichas. Inative e crie um novo vínculo.');}
 
    qs.push(db.prepare(`UPDATE ${entity} SET ${keys.map(k=>k+'=?').join(',')} WHERE id=?`).bind(...keys.map(k=>changes[k]),entityId));
 
@@ -112,7 +112,7 @@ export async function POST(req:Request){try{
 
  }else if(b.action==='report'){
 
-  entity='reports';const week=await get('weeks',b.weekId),group=await get('groups',b.groupId);if(week.class_id!==group.class_id||week.start<group.start_week)throw Error('Grupo incompatível com a semana.');if(await db.prepare('SELECT id FROM reports WHERE week_id=? AND group_id=?').bind(b.weekId,b.groupId).first())throw Error('Este grupo já tem relatório nesta semana.');
+  entity='reports';if(!auth.admin&&!auth.representatives.some((r:any)=>r.group_id===b.groupId))throw Error('Você só pode enviar relatórios do seu próprio grupo.');const week=await get('weeks',b.weekId),group=await get('groups',b.groupId);if(week.class_id!==group.class_id||week.start<group.start_week)throw Error('Grupo incompatível com a semana.');if(await db.prepare('SELECT id FROM reports WHERE week_id=? AND group_id=?').bind(b.weekId,b.groupId).first())throw Error('Este grupo já tem relatório nesta semana.');
 
   const members=(await db.prepare('SELECT id FROM students WHERE group_id=? AND active=1').bind(b.groupId).all<any>()).results;if(!members.length)throw Error('Cadastre os integrantes primeiro.');if(!Array.isArray(b.tasks)||b.tasks.length!==members.length||new Set(b.tasks.map((t:any)=>t.studentId)).size!==members.length)throw Error('Informe a atividade de cada integrante.');
 
@@ -121,7 +121,7 @@ export async function POST(req:Request){try{
   for(const t of b.tasks){if(!members.some((m:any)=>m.id===t.studentId))throw Error('Integrante não pertence ao grupo.');qs.push(db.prepare('INSERT INTO tasks(id,report_id,student_id,description,status,justification,evidence,updated_at) VALUES(?,?,?,?,?,?,?,?)').bind(id(),entityId,t.studentId,t.none?'Sem tarefa atribuída':txt(t.description),t.none?'none':'pending','','',now));}
 
   }else if(b.action==='update-report'){
-  entity='reports';entityId=txt(b.id,100);const old=await get('reports',entityId);if(old.updated_at!==b.updatedAt)return Response.json({error:'Relatório alterado. Atualize antes de editar.'},{status:409});
+  entity='reports';entityId=txt(b.id,100);const old=await get('reports',entityId);if(!auth.admin&&!auth.representatives.some((r:any)=>r.group_id===old.group_id))throw Error('Acesso restrito ao grupo.');if(old.updated_at!==b.updatedAt)return Response.json({error:'Relatório alterado. Atualize antes de editar.'},{status:409});
   const existing=(await db.prepare('SELECT * FROM tasks WHERE report_id=?').bind(entityId).all<any>()).results;
   if(!Array.isArray(b.tasks)||b.tasks.length!==existing.length||new Set(b.tasks.map((t:any)=>t.studentId)).size!==existing.length)throw Error('Preserve todos os integrantes do relatório original.');
   const delivery=txt(b.delivery),changedDelivery=delivery!==old.delivery;
@@ -138,8 +138,16 @@ export async function POST(req:Request){try{
 
  }else if(b.action==='rubric'){
 
-  entity='rubrics';await get('classes',b.classId);validateConfig(Number(b.total),b.config);const locked=await db.prepare('SELECT a.id FROM assessments a JOIN assignments x ON a.assignment_id=x.id JOIN groups g ON x.group_id=g.id WHERE g.class_id=? LIMIT 1').bind(b.classId).first();const weekly=await db.prepare('SELECT r.id FROM reports r JOIN groups g ON r.group_id=g.id WHERE g.class_id=? AND r.reviewed_at IS NOT NULL LIMIT 1').bind(b.classId).first();const individual=await db.prepare('SELECT t.id FROM tasks t JOIN reports r ON t.report_id=r.id JOIN groups g ON r.group_id=g.id WHERE g.class_id=? AND t.reviewed_at IS NOT NULL LIMIT 1').bind(b.classId).first();if(locked||weekly||individual)throw Error('Os parâmetros ficam bloqueados após a primeira avaliação para preservar as notas.');qs.push(db.prepare('INSERT INTO rubrics VALUES(?,?,?,?,?,?) ON CONFLICT(class_id) DO UPDATE SET total=excluded.total,config=excluded.config,updated_at=excluded.updated_at').bind(entityId,b.classId,Number(b.total),JSON.stringify(b.config),now,now));
+  entity='rubrics';await get('classes',b.classId);validateConfig(Number(b.total),b.config);validatePeer(b.config);const peerLocked=await db.prepare('SELECT p.id FROM participation p JOIN reports r ON p.report_id=r.id JOIN groups g ON r.group_id=g.id WHERE g.class_id=? LIMIT 1').bind(b.classId).first();const locked=await db.prepare('SELECT a.id FROM assessments a JOIN assignments x ON a.assignment_id=x.id JOIN groups g ON x.group_id=g.id WHERE g.class_id=? LIMIT 1').bind(b.classId).first();const weekly=await db.prepare('SELECT r.id FROM reports r JOIN groups g ON r.group_id=g.id WHERE g.class_id=? AND r.reviewed_at IS NOT NULL LIMIT 1').bind(b.classId).first();const individual=await db.prepare('SELECT t.id FROM tasks t JOIN reports r ON t.report_id=r.id JOIN groups g ON r.group_id=g.id WHERE g.class_id=? AND t.reviewed_at IS NOT NULL LIMIT 1').bind(b.classId).first();if(locked||weekly||individual||peerLocked)throw Error('Os parâmetros ficam bloqueados após a primeira avaliação para preservar as notas.');qs.push(db.prepare('INSERT INTO rubrics VALUES(?,?,?,?,?,?) ON CONFLICT(class_id) DO UPDATE SET total=excluded.total,config=excluded.config,updated_at=excluded.updated_at').bind(entityId,b.classId,Number(b.total),JSON.stringify(b.config),now,now));
 
+  }else if(b.action==='representative'){
+  entity='representatives';await get('groups',b.groupId);const email=txt(b.email,200).toLowerCase();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw Error('Informe um e-mail válido.');qs.push(db.prepare('INSERT INTO representatives(id,group_id,name,email,created_at) VALUES(?,?,?,?,?)').bind(entityId,b.groupId,txt(b.name,150),email,now));
+ }else if(b.action==='participation'){
+  entity='participation';const report=await get('reports',b.reportId);if(!auth.admin&&!auth.representatives.some((r:any)=>r.group_id===report.group_id))throw Error('Somente o representante do grupo pode enviar esta avaliação.');
+  const group=await get('groups',report.group_id);const rubric=await db.prepare('SELECT * FROM rubrics WHERE class_id=?').bind(group.class_id).first<any>();if(!rubric)throw Error('Configure os parâmetros de notas da turma primeiro.');const cfg=JSON.parse(rubric.config).weekly;
+  const members=(await db.prepare('SELECT student_id FROM tasks WHERE report_id=?').bind(report.id).all<any>()).results;const targets=cfg.peerMode==='collective'?['group']:members.map((t:any)=>t.student_id);const percentages:Record<string,number>={};
+  for(const target of targets)percentages[target]=percentScore(cfg.peerCriteria,b.scores?.[target]);
+  qs.push(db.prepare('INSERT INTO participation VALUES(?,?,?,?,?,?,?)').bind(entityId,report.id,cfg.peerMode,JSON.stringify(b.scores),JSON.stringify(percentages),auth.user.email,now));
  }else if(b.action==='evaluator'){
 
   entity='evaluators';await get('classes',b.classId);const email=txt(b.email,200).toLowerCase();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw Error('Informe um e-mail válido.');qs.push(db.prepare('INSERT INTO evaluators(id,class_id,name,email,created_at) VALUES(?,?,?,?,?)').bind(entityId,b.classId,txt(b.name,150),email,now));
